@@ -1,7 +1,7 @@
 {
   "name": "@missher/dsh-focus",
-  "version": "0.4.1",
-  "description": "DSH 执行增强：自动规划、按计划实施、针对性测试、定位修复、代码检查与交付核对。",
+  "version": "0.5.0",
+  "description": "DSH 执行增强：面向调研、整理、文稿、数据、应用操作与开发，保持目标、按计划执行、检查结果并交付。",
   "type": "module",
   "license": "MIT",
   "engines": { "node": ">=24" },

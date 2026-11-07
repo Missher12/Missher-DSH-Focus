@@ -172,3 +172,29 @@ test('原生文件修改推动检查提醒，恢复后保留状态，跨轮重�
   await execute('edit', { file_path: '/sample/module.mjs' })
   assert.match(focusContext(await assemble()), /dsh-focus-review/)
 })
+
+test('不改文件的资料任务完成清单后仍有结果检查提醒，恢复后保留而下一轮清除', async t => {
+  const { ctx, session, execute, assemble } = await harness(t)
+  ctx.tools.register({
+    name: 'skill', description: '读取已注册的任务方法',
+    parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+    execute: async args => (await ctx.skills.get(args.name)).content,
+  })
+  await execute('skill', { name: 'dsh-focus-planning' })
+  await execute('todo_write', { todos: [
+    { content: '提取报价', status: 'in_progress' }, { content: '核对总价与限制', status: 'pending' },
+  ] })
+  await execute('skill', { name: 'dsh-focus-execution' })
+  await execute('todo_write', { todos: [
+    { content: '提取报价', status: 'completed' }, { content: '核对总价与限制', status: 'completed' },
+  ] })
+  const note = focusContext(await assemble())
+  assert.match(note, /dsh-focus-review/)
+  assert.doesNotMatch(note, /<dsh-focus-plan>/)
+  const log = await ctx.sessionQuery.readSession(SessionId('focus-test'))
+  const restored = Session.create(SessionId('restored-research'), log.events)
+  assert.match(focusContext(await assemble({ id: restored.id, session: restored })), /dsh-focus-review/)
+  session.append('turn/start', { turn: 2 })
+  assert.equal(focusContext(await assemble()), '')
+})

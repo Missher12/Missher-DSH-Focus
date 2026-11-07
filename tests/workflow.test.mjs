@@ -76,7 +76,7 @@ test('长会话沿用方法时仍提示本轮检查，不复用上一轮完成�
   assert.equal(flow.note(), '')
   flow.call('edit')
   assert.match(flow.note(), /dsh-focus-review/)
-  assert.doesNotMatch(flow.note(), /已读取代码检查方法/)
+  assert.doesNotMatch(flow.note(), /已读取结果检查方法/)
 })
 
 test('只保存有界调用标识，不存文件内容，无关事件不制造状态更新', () => {
@@ -95,4 +95,23 @@ test('只保存有界调用标识，不存文件内容，无关事件不制造�
   assert.equal(flow.state(), before)
   flow.complete('edit-39')
   assert.match(flow.note(), /dsh-focus-review/)
+})
+
+test('只读资料的清单进展也提示结果检查，更新完成清单不会制造重查循环', () => {
+  const flow = scenario()
+  flow.call('skill', { name: 'dsh-focus-planning' })
+  const todos = [{ content: '提取三份报价', status: 'in_progress' }, { content: '核对条件并给出建议', status: 'pending' }]
+  flow.append('todo/write', { todos })
+  flow.call('skill', { name: 'dsh-focus-execution' })
+  flow.call('read', { file_path: '/sample/报价.md' })
+  assert.equal(flow.note(), '')
+  flow.append('todo/write', { todos: [{ ...todos[0], status: 'completed' }, { ...todos[1], status: 'in_progress' }] })
+  assert.match(flow.note(), /dsh-focus-review/)
+  flow.call('skill', { name: 'dsh-focus-review' })
+  assert.match(flow.note(), /dsh-focus-delivery/)
+  flow.call('skill', { name: 'dsh-focus-delivery' })
+  flow.append('todo/write', { todos: todos.map(item => ({ ...item, status: 'completed' })) })
+  assert.equal(flow.note(), '')
+  flow.append('turn/start', { turn: 2 })
+  assert.equal(flow.note(), '')
 })
