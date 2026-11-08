@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type { Session } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -10,11 +11,24 @@ import { bundledSkills, guidance } from './skills.ts'
 export const name = 'dsh-focus'
 export const inject = ['systemPrompt', 'skills', 'tools', 'sessionProjections']
 
-export function apply(ctx: Context): void {
+// 0.2.2 返回就绪句柄；0.2.1 返回释放函数，仍通过旧注册表读取。
+function stateReader<S>(registered: unknown, legacy: (session: Session) => unknown): (session: Session) => S | undefined {
+  if (registered !== null && typeof registered === 'object' && 'stateOf' in registered && typeof registered.stateOf === 'function') {
+    const stateOf = registered.stateOf
+    return session => stateOf.call(registered, session) as S
+  }
+  return session => legacy(session) as S | undefined
+}
+
+export async function apply(ctx: Context): Promise<void> {
   const failures = new FailureTracker()
   for (const skill of bundledSkills) ctx.skills.register(skill)
-  ctx.sessionProjections.register(focusProjection)
-  ctx.sessionProjections.register(workflowProjection)
+  const planRegistration = await ctx.sessionProjections.register(focusProjection)
+  const workflowRegistration = await ctx.sessionProjections.register(workflowProjection)
+  const planOf = stateReader<ReturnType<typeof focusProjection.init>>(planRegistration,
+    session => ctx.sessionProjections.stateOf(session, 'missherFocus'))
+  const workflowOf = stateReader<ReturnType<typeof workflowProjection.init>>(workflowRegistration,
+    session => ctx.sessionProjections.stateOf(session, 'missherFocusWorkflow'))
   ctx.systemPrompt.section({
     name: 'missher-focus-guidance', order: 6500, interpolate: false,
     text: ({ agent }) => agent ? guidance : '',
@@ -23,8 +37,8 @@ export function apply(ctx: Context): void {
     name: 'missher-focus-progress', order: 6500, interpolate: false,
     text: ({ agent }) => {
       if (!agent) return ''
-      const plan = ctx.sessionProjections.stateOf(agent.session, 'missherFocus') ?? []
-      const workflow = ctx.sessionProjections.stateOf(agent.session, 'missherFocusWorkflow')
+      const plan = planOf(agent.session) ?? []
+      const workflow = workflowOf(agent.session)
       return [renderPlan(plan), failures.reminder(agent.session), renderWorkflow(workflow)].filter(Boolean).join('\n\n')
     },
   })

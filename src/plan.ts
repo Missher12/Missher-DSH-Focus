@@ -7,7 +7,7 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
 }
 
 /** 从原生清单事件恢复状态，不另建任务数据库或修改原生清单。 */
-export const focusProjection: ProjectionDefinition<'missherFocus'> = {
+export const focusProjection: ProjectionDefinition<'missherFocus', TodoItem[]> = {
   key: 'missherFocus', stateVersion: 1,
   stateSchema: z.array(z.object({ content: z.string(), status: z.enum(['pending', 'in_progress', 'completed']) })),
   init: () => [],

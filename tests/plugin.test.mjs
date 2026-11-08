@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId, Session } from '@deepseek-ai/dsh-session'
-import SessionQueryEngine from '@deepseek-ai/dsh-session-query'
 import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import { SkillRegistry } from '@deepseek-ai/dsh-skill'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -16,23 +15,37 @@ async function harness(t) {
   const ctx = new Context()
   t.after(async () => { await ctx.fiber.dispose() })
   await ctx.plugin(SessionStore)
-  await ctx.plugin(class extends SessionQueryEngine {})
+  const logs = new WeakMap()
+  ctx.on('session/event', (session, event) => {
+    if (!logs.has(session)) logs.set(session, [])
+    logs.get(session).push(event)
+  })
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  const modernTools = typeof ctx.tools.resolve === 'function'
+  if (modernTools) await ctx.plugin(await import('@deepseek-ai/dsh-tool-executor-native'))
   await ctx.plugin(SkillRegistry)
   await ctx.plugin(TodoTool, { allowParallelInProgress: false })
   const plugin = await ctx.plugin(Focus)
   const session = ctx.sessions.create(SessionId('focus-test'))
   const agent = { id: session.id, session }
+  if (modernTools) agent.ctx = (await import('@deepseek-ai/dsh-scope')).createScope(ctx, agent).ctx
   let sequence = 0
   const execute = async (name, args, caller = agent) => {
     const callId = ToolCallId(`test-${++sequence}`)
     // 工具运行时负责结果钩子；原生代理驱动负责持久化调用和结果。
     caller.session.append('tool/call', { turn: 1, step: sequence, callId, name, arguments: JSON.stringify(args) })
-    const result = await ctx.tools.execute({
-      name, arguments: args, callId, signal: new AbortController().signal, agent: caller,
-    })
+    const signal = new AbortController().signal
+    let result
+    if (modernTools) {
+      const toolSet = await ctx.tools.resolve({ agent: caller, modelSelection: {}, signal })
+      try {
+        const batch = await ctx.tools.execute({ agent: caller, signal, toolSet,
+          calls: [{ type: 'tool-call', name, id: callId, arguments: JSON.stringify(args) }] })
+        result = batch.results[0].result
+      } finally { toolSet.dispose() }
+    } else result = await ctx.tools.execute({ name, arguments: args, callId, signal, agent: caller })
     caller.session.append('tool/result', { turn: 1, step: sequence, message: {
       id: `result-${sequence}`, role: 'tool', source: { kind: 'tool', callId },
       toolCallId: callId, content: result.content, isError: result.isError,
@@ -40,7 +53,7 @@ async function harness(t) {
     return result
   }
   const assemble = (caller = agent) => ctx.systemPrompt.assemble({ agent: caller, scope: caller })
-  return { ctx, plugin, session, agent, execute, assemble }
+  return { ctx, plugin, session, agent, execute, assemble, readLog: () => ({ events: logs.get(session) ?? [] }) }
 }
 
 const focusContext = assembly => assembly.contexts.find(item => item.name === 'missher-focus-progress')?.text ?? ''
@@ -88,9 +101,9 @@ test('原生清单同步为有界中文提醒，不改变原计划', async t => 
 })
 
 test('恢复会话时重建已有计划，不串到其他会话', async t => {
-  const { ctx, execute, assemble } = await harness(t)
+  const { ctx, execute, assemble, readLog } = await harness(t)
   await execute('todo_write', { todos: [{ content: '恢复后继续实现表单', status: 'in_progress' }] })
-  const log = await ctx.sessionQuery.readSession(SessionId('focus-test'))
+  const log = readLog()
   const restored = Session.create(SessionId('focus-restored'), log.events)
   const restoredAgent = { id: restored.id, session: restored }
   assert.ok(focusContext(await assemble(restoredAgent)).includes('恢复后继续实现表单'))
@@ -143,7 +156,7 @@ test('失败触发提示，读取调试技能后清除提示，始终保留真�
 })
 
 test('原生文件修改推动检查提醒，恢复后保留状态，跨轮重新判断进度', async t => {
-  const { ctx, session, execute, assemble } = await harness(t)
+  const { ctx, session, execute, assemble, readLog } = await harness(t)
   for (const name of ['skill', 'edit']) {
     ctx.tools.register({
       name, description: '阶段衔接集成检查',
@@ -162,7 +175,7 @@ test('原生文件修改推动检查提醒，恢复后保留状态，跨轮重�
   assert.equal(focusContext(await assemble()), '')
   await execute('edit', { file_path: '/sample/module.mjs' })
   assert.match(focusContext(await assemble()), /再次修改/)
-  const log = await ctx.sessionQuery.readSession(SessionId('focus-test'))
+  const log = readLog()
   const restored = Session.create(SessionId('restored-workflow'), log.events)
   assert.match(focusContext(await assemble({ id: restored.id, session: restored })), /再次修改/)
   const other = ctx.sessions.create(SessionId('other-workflow'))
@@ -174,7 +187,7 @@ test('原生文件修改推动检查提醒，恢复后保留状态，跨轮重�
 })
 
 test('不改文件的资料任务完成清单后仍有结果检查提醒，恢复后保留而下一轮清除', async t => {
-  const { ctx, session, execute, assemble } = await harness(t)
+  const { ctx, session, execute, assemble, readLog } = await harness(t)
   ctx.tools.register({
     name: 'skill', description: '读取已注册的任务方法',
     parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
@@ -192,7 +205,7 @@ test('不改文件的资料任务完成清单后仍有结果检查提醒，恢�
   const note = focusContext(await assemble())
   assert.match(note, /dsh-focus-review/)
   assert.doesNotMatch(note, /<dsh-focus-plan>/)
-  const log = await ctx.sessionQuery.readSession(SessionId('focus-test'))
+  const log = readLog()
   const restored = Session.create(SessionId('restored-research'), log.events)
   assert.match(focusContext(await assemble({ id: restored.id, session: restored })), /dsh-focus-review/)
   session.append('turn/start', { turn: 2 })

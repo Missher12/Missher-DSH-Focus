@@ -22,7 +22,7 @@ const workflowSkills = new Set([
 ])
 
 /** 复用原生日志恢复阶段，只记录工具名称和调用编号，不保存源码或命令。 */
-export const workflowProjection: ProjectionDefinition<'missherFocusWorkflow'> = {
+export const workflowProjection: ProjectionDefinition<'missherFocusWorkflow', WorkflowState> = {
   key: 'missherFocusWorkflow', stateVersion: 3, stateSchema, init: initial,
   apply(state, event) {
     // 沿用会话已经选择的方法；上一轮的修改、检查和交付进度不沿用。
