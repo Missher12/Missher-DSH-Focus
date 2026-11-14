@@ -12,7 +12,7 @@ const sdk = resolve(sdkArg), bundle = resolve(bundleArg), work = resolve(workArg
 const sdkRequire = createRequire(sdk + '/package.json')
 const load = name => import(pathToFileURL(sdkRequire.resolve('@deepseek-ai/' + name)))
 const { boot, loadProfileDirectory, evaluatePluginCompatibility, getDshRuntimeVersion } = await load('dsh-app-boot')
-assert.equal(getDshRuntimeVersion(), '0.2.2-rc.1')
+assert.equal(getDshRuntimeVersion(), '0.2.2-rc.3')
 mkdirSync(work) // 不覆盖已有验证目录，更不接触日常 profile。
 symlinkSync(sdk + '/node_modules', work + '/node_modules', 'dir')
 execFileSync('/usr/bin/tar', ['-xzf', bundle, '-C', work])
@@ -31,6 +31,7 @@ save()
 assert.deepEqual(admitted.skippedBundles, [], '安装包被真实宿主准入逻辑跳过')
 assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.1-rc.4'), undefined)
 assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.1'), undefined)
+assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.3'), undefined)
 assert.ok(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.2'), '未经验证的版本仍应受准入限制')
 
 const [Sessions, Projections, Prompt, Tools, Native, Skills, Todo, Scope, Llm] = await Promise.all([
