@@ -12,7 +12,7 @@ const sdk = resolve(sdkArg), bundle = resolve(bundleArg), work = resolve(workArg
 const sdkRequire = createRequire(sdk + '/package.json')
 const load = name => import(pathToFileURL(sdkRequire.resolve('@deepseek-ai/' + name)))
 const { boot, loadProfileDirectory, evaluatePluginCompatibility, getDshRuntimeVersion } = await load('dsh-app-boot')
-assert.equal(getDshRuntimeVersion(), '0.2.2-rc.3')
+assert.ok(['0.2.2-rc.3', '0.2.2-rc.4'].includes(getDshRuntimeVersion()), '需要支持的 0.2.2 官方 SDK')
 mkdirSync(work) // 不覆盖已有验证目录，更不接触日常 profile。
 symlinkSync(sdk + '/node_modules', work + '/node_modules', 'dir')
 execFileSync('/usr/bin/tar', ['-xzf', bundle, '-C', work])
@@ -32,6 +32,7 @@ assert.deepEqual(admitted.skippedBundles, [], '安装包被真实宿主准入逻
 assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.1-rc.4'), undefined)
 assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.1'), undefined)
 assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.3'), undefined)
+assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.4'), undefined)
 assert.ok(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.2'), '未经验证的版本仍应受准入限制')
 
 const [Sessions, Projections, Prompt, Tools, Native, Skills, Todo, Scope, Llm] = await Promise.all([
@@ -50,6 +51,12 @@ const ctx = await boot('focus-compat', profile + '/cordis.yml', admitted.layers.
 try {
   const entry = [...ctx.loader.entries()].find(entry => entry.options.name === '@missher/dsh-focus')
   assert.equal(entry?.fiber?.state, 2, 'Cordis 4.1 的 ACTIVE 状态为 2')
+  const owner = entry.fiber.uid
+  const focusHooks = name => (ctx.events._hooks[name] ?? []).filter(hook => hook.ctx.fiber.uid === owner)
+  const hookNames = ['tools/result', 'session/event']
+  const projectionKeys = ['missherFocus', 'missherFocusWorkflow']
+  for (const name of hookNames) assert.equal(focusHooks(name).length, 1)
+  for (const key of projectionKeys) assert.equal(ctx.sessionProjections.registrations.get(key)?.refs, 1)
   assert.equal((await ctx.skills.list()).filter(skill => skill.name.startsWith('dsh-focus-')).length, 6)
   const session = ctx.sessions.create(Sessions.SessionId('focus-isolated'))
   const agent = { id: session.id, session }
@@ -104,6 +111,10 @@ try {
   await ctx.loader.await()
   assert.equal((await ctx.skills.list()).filter(skill => skill.name.startsWith('dsh-focus-')).length, 0)
   assert.ok(!(await assemble()).sections.some(section => section.name === 'missher-focus-guidance'))
-  Object.assign(report, { loaderActive: true, skills: 6, prompt: true, workflow: true, finalResultHook: true, unload: true })
+  assert.ok(!(await assemble()).contexts.some(context => context.name === 'missher-focus-progress'))
+  for (const name of hookNames) assert.equal(focusHooks(name).length, 0)
+  for (const key of projectionKeys) assert.equal(ctx.sessionProjections.registrations.get(key)?.refs ?? 0, 0)
+  Object.assign(report, { loaderActive: true, skills: 6, prompt: true, workflow: true, finalResultHook: true,
+    unload: true, hooksReleased: true, projectionsReleased: true })
   save()
 } finally { await ctx.fiber.dispose() }
