@@ -8,7 +8,7 @@ import { SkillRegistry } from '@deepseek-ai/dsh-skill'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as TodoTool from '@deepseek-ai/dsh-tool-todo'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as Focus from '../src/index.ts'
 
 async function harness(t) {
@@ -58,6 +58,38 @@ async function harness(t) {
 
 const focusContext = assembly => assembly.contexts.find(item => item.name === 'missher-focus-progress')?.text ?? ''
 
+test('多步清单直接驱动核对提示，无需依次读取通用技能', async t => {
+  const { execute, assemble } = await harness(t)
+  const todo = [{ content: '提取报价', status: 'in_progress' }, { content: '核对总价', status: 'pending' }]
+  assert.equal((await execute('todo_write', { todos: todo })).isError, false)
+  assert.doesNotMatch(focusContext(await assemble()), /dsh-focus-execution/)
+  await execute('todo_write', { todos: todo.map(item => ({ ...item, status: 'completed' })) })
+  const note = focusContext(await assemble())
+  assert.match(note, /核对实际成果/)
+  assert.doesNotMatch(note, /dsh-focus-(review|delivery)|<dsh-focus-plan>/)
+  const guide = (await assemble()).sections.find(item => item.name === 'missher-focus-guidance').text
+  assert.ok(guide.length < 320)
+})
+
+test('原生清单结果仍可见时只注入当前项与下一项，压缩或恢复后补回剩余项', async t => {
+  const { session, execute, assemble, readLog } = await harness(t)
+  const todos = [
+    { content: '处理当前文稿', status: 'in_progress' },
+    { content: '下一份资料', status: 'pending' },
+    { content: '保留最后一项', status: 'pending' },
+  ]
+  assert.equal((await execute('todo_write', { todos })).isError, false)
+  assert.match(focusContext(await assemble()), /下一份资料/)
+  assert.doesNotMatch(focusContext(await assemble()), /保留最后一项/)
+  const seq = readLog().events.findLast(event => event.type === 'tool/result').seq
+  session.append('user/message', createUserMessage({
+    source: { kind: 'user' }, content: [{ type: 'text', text: '继续原任务' }],
+  }), { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] })
+  assert.match(focusContext(await assemble()), /保留最后一项/)
+  session.append('turn/start', { turn: 2 })
+  assert.match(focusContext(await assemble()), /保留最后一项/)
+})
+
 test('加载时注册六项中文技能，卸载时完整移除', async t => {
   const { ctx, plugin, assemble } = await harness(t)
   const catalog = await ctx.skills.list()
@@ -71,7 +103,7 @@ test('加载时注册六项中文技能，卸载时完整移除', async t => {
     assert.ok(loaded.content.trim().length > 100)
     assert.ok(loaded.content.startsWith(`版本：${version}。`))
     assert.equal(loaded.invocation.modelInvocable, true)
-    assert.match(loaded.description, /适用于/)
+    assert.ok(loaded.description.trim().length <= 45)
   }
   assert.ok((await assemble()).sections.some(item => item.name === 'missher-focus-guidance' && item.text.length > 0))
   assert.equal(focusContext(await assemble()), '')
@@ -97,7 +129,8 @@ test('原生清单同步为有界中文提醒，不改变原计划', async t => 
   session.append('turn/start', { turn: 1 })
   assert.ok(focusContext(await assemble()).includes('实现预约提交和结果反馈'))
   await execute('todo_write', { todos: todos.map(item => ({ ...item, status: 'completed' })) })
-  assert.equal(focusContext(await assemble()), '')
+  assert.doesNotMatch(focusContext(await assemble()), /<dsh-focus-plan>/)
+  assert.match(focusContext(await assemble()), /核对实际成果/)
 })
 
 test('恢复会话时重建已有计划，不串到其他会话', async t => {
@@ -168,10 +201,8 @@ test('原生文件修改推动检查提醒，恢复后保留状态，跨轮重�
   await execute('skill', { name: 'dsh-focus-debugging' })
   const result = await execute('edit', { file_path: '/sample/module.mjs' })
   assert.equal(result.value, '工具成功')
-  assert.match(focusContext(await assemble()), /dsh-focus-review/)
+  assert.match(focusContext(await assemble()), /核对实际成果/)
   await execute('skill', { name: 'dsh-focus-review' })
-  assert.match(focusContext(await assemble()), /dsh-focus-delivery/)
-  await execute('skill', { name: 'dsh-focus-delivery' })
   assert.equal(focusContext(await assemble()), '')
   await execute('edit', { file_path: '/sample/module.mjs' })
   assert.match(focusContext(await assemble()), /再次修改/)
@@ -183,7 +214,7 @@ test('原生文件修改推动检查提醒，恢复后保留状态，跨轮重�
   session.append('turn/start', { turn: 1 })
   assert.equal(focusContext(await assemble()), '')
   await execute('edit', { file_path: '/sample/module.mjs' })
-  assert.match(focusContext(await assemble()), /dsh-focus-review/)
+  assert.equal(focusContext(await assemble()), '')
 })
 
 test('不改文件的资料任务完成清单后仍有结果检查提醒，恢复后保留而下一轮清除', async t => {
@@ -203,11 +234,11 @@ test('不改文件的资料任务完成清单后仍有结果检查提醒，恢�
     { content: '提取报价', status: 'completed' }, { content: '核对总价与限制', status: 'completed' },
   ] })
   const note = focusContext(await assemble())
-  assert.match(note, /dsh-focus-review/)
+  assert.match(note, /核对实际成果/)
   assert.doesNotMatch(note, /<dsh-focus-plan>/)
   const log = readLog()
   const restored = Session.create(SessionId('restored-research'), log.events)
-  assert.match(focusContext(await assemble({ id: restored.id, session: restored })), /dsh-focus-review/)
+  assert.match(focusContext(await assemble({ id: restored.id, session: restored })), /核对实际成果/)
   session.append('turn/start', { turn: 2 })
   assert.equal(focusContext(await assemble()), '')
 })

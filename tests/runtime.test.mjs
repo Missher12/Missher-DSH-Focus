@@ -92,6 +92,23 @@ test('命令退出码掩盖 Node 测试失败时保留失败提醒，不篡改�
   }
 })
 
+test('PowerShell 识别前台失败和 CRLF 测试汇总，界面文案不改变重试判定', () => {
+  const tracker = new FailureTracker(), session = {}
+  const args = { command: 'node.exe --test tests.mjs', workdir: 'C:\\测试 目录', description: '检查回归' }
+  const result = bashReport(nodeReport(1, '#').replaceAll('\n', '\r\n'))
+  const nonzero = { ...result, value: { ...result.value, exitCode: 1 } }
+  tracker.observe(session, 'pwsh', args, nonzero, true)
+  assert.equal(tracker.reminder(session), '')
+  tracker.observe(session, 'pwsh', args, nonzero)
+  assert.match(tracker.reminder(session), /pwsh/)
+  tracker.observe(session, 'pwsh', { ...args, description: '查看实际失败' }, nonzero)
+  assert.match(tracker.reminder(session), /至少两次/)
+  tracker.observe(session, 'pwsh', args, result)
+  assert.match(tracker.reminder(session), /测试报告.*失败/)
+  tracker.observe(session, 'pwsh', args, bashReport(nodeReport(0, '#')))
+  assert.equal(tracker.reminder(session), '')
+})
+
 test('不把片段、截断、矛盾汇总或无关输出当成实际测试失败', () => {
   const inputs = [
     ['cat report.txt', bashReport(nodeReport(1))],

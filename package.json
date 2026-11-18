@@ -1,6 +1,6 @@
 {
   "name": "@missher/dsh-focus",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "DSH 执行增强：面向调研、整理、文稿、数据、应用操作与开发，保持目标、按计划执行、检查结果并交付。",
   "type": "module",
   "license": "MIT",

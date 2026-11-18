@@ -2,10 +2,12 @@ import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 
 interface Attempt { name: string; reason: string; repeated: boolean; acknowledged: boolean; masked: boolean }
 
+const isShellTool = (name: string): boolean => name === 'bash' || name === 'pwsh'
+
 function callKey(name: string, args: unknown): string | undefined {
   try {
     // 原生命令工具的 description 仅用于界面展示，不改变实际操作。
-    const inputs = name === 'bash' && args !== null && typeof args === 'object' && !Array.isArray(args)
+    const inputs = isShellTool(name) && args !== null && typeof args === 'object' && !Array.isArray(args)
       ? Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'description')) : args
     const value = JSON.stringify(inputs, (_key, item) => {
       if (item === null || typeof item !== 'object' || Array.isArray(item)) return item
@@ -37,7 +39,7 @@ function failureReason(name: string, args: unknown, result: ToolExecutionResult)
   if (result.isError) return { reason: `${result.error.info?.code ?? ''}\n${result.error.message}`, masked: false }
   // 工具传输成功不代表命令成功，需要检查前台命令退出码。
   const value = result.value
-  if (name !== 'bash' || value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  if (!isShellTool(name) || value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   if (value.kind !== 'foreground' || value.aborted === true || typeof value.exitCode !== 'number') return undefined
   const masked = value.exitCode === 0 && hasFailedNodeReport(args, value.stdout, value.stderr)
   if (value.exitCode === 0 && !masked) return undefined
@@ -74,13 +76,13 @@ export class FailureTracker {
     const pending = [...(this.sessions.get(session)?.values() ?? [])].filter(item => !item.acknowledged)
     if (!pending.length) return ''
     const report = pending.some(item => item.masked)
-      ? '测试报告提醒：此前命令退出码为 0，但完整的 Node 测试报告仍显示失败；不能据此声称检查通过。保留测试原始退出码；预期失败可继续修复，已有后续通过证据时以新证据为准。\n' : ''
+      ? '测试报告提醒：退出码为 0，但完整测试报告显示失败。以报告和后续实测为准。\n' : ''
     const repeated = pending.filter(item => item.repeated).slice(-3)
     if (!repeated.length) {
       const name = JSON.stringify(pending.at(-1)!.name.slice(0, 80))
-      return report + `执行提醒：工具 ${name} 的结果中曾出现失败。若这是验证缺陷时预期出现的失败，继续原定修复即可；明确的参数错误可直接纠正。非预期失败请先加载或沿用「定位修复」（dsh-focus-debugging），根据已有错误定位原因，再修改。若已通过其他方法解决，继续原任务，不必为了这条历史提示重复验证。`
+      return report + `工具 ${name} 曾失败。先看已有结果，原因不明时按需查定位修复（dsh-focus-debugging）。`
     }
     const names = [...new Set(repeated.map(item => item.name))].map(name => JSON.stringify(name.slice(0, 80))).join('、')
-    return report + `执行提醒：${names} 中有相同参数的调用至少两次返回相同失败。先加载或沿用「定位修复」（dsh-focus-debugging），对照已有错误定位原因；没有前提变化时不要原样重试。若已换方法解决，回到原任务。此提醒不代表任务失败，也不增加审批。`
+    return report + `工具 ${names} 同参数至少两次返回相同失败。换方法，原因不明时查定位修复（dsh-focus-debugging）。`
   }
 }

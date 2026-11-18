@@ -14,23 +14,17 @@ function scenario() {
   return { append, complete, call, note: () => renderWorkflow(state), state: () => state }
 }
 
-test('有计划时提示实施，修改后提示检查，读取检查后提示交付', () => {
+test('多步清单直接开启检查提醒，读取已有方法后不再提示加载其他技能', () => {
   const flow = scenario()
-  flow.call('skill', { name: 'dsh-focus-planning' })
-  assert.equal(flow.note(), '')
   flow.append('todo/write', { todos: [{ content: '实现', status: 'in_progress' }, { content: '验证', status: 'pending' }] })
-  assert.match(flow.note(), /dsh-focus-execution/)
-  flow.call('skill', { name: 'dsh-focus-execution' })
   assert.equal(flow.note(), '')
   flow.call('edit', { file_path: '/sample/app.mjs' })
-  assert.match(flow.note(), /dsh-focus-review/)
+  assert.match(flow.note(), /核对实际成果/)
   flow.call('bash', { command: 'node --test' })
-  assert.match(flow.note(), /dsh-focus-review/)
+  assert.match(flow.note(), /核对实际成果/)
   flow.call('skill', { name: 'dsh-focus-review' }, true)
-  assert.match(flow.note(), /dsh-focus-review/)
+  assert.match(flow.note(), /核对实际成果/)
   flow.call('skill', { name: 'dsh-focus-review' })
-  assert.match(flow.note(), /dsh-focus-delivery/)
-  flow.call('skill', { name: 'dsh-focus-delivery' })
   assert.equal(flow.note(), '')
 })
 
@@ -45,7 +39,7 @@ test('普通小改不触发阶段流程，失败与取消不假装推进，新�
   flow.complete('unrelated-success')
   assert.equal(flow.note(), '')
   flow.call('edit')
-  assert.match(flow.note(), /dsh-focus-review/)
+  assert.match(flow.note(), /核对实际成果/)
   assert.equal(other.note(), '')
   flow.append('turn/start', { turn: 2 })
   flow.complete('cancelled')
@@ -61,12 +55,12 @@ test('读取检查和交付后继续修改代码，会重新提示核对最新�
   flow.call('edit')
   assert.match(flow.note(), /再次修改/)
   assert.match(flow.note(), /最新变更/)
-  assert.match(flow.note(), /不必.*重跑全部/)
+  assert.match(flow.note(), /只复查/)
   flow.call('skill', { name: 'dsh-focus-delivery' })
   assert.equal(flow.note(), '')
 })
 
-test('长会话沿用方法时仍提示本轮检查，不复用上一轮完成状态', () => {
+test('上一轮处理复杂任务后，新的普通小改仍轻量执行', () => {
   const flow = scenario()
   flow.call('skill', { name: 'dsh-focus-debugging' })
   flow.call('edit')
@@ -75,8 +69,7 @@ test('长会话沿用方法时仍提示本轮检查，不复用上一轮完成�
   flow.append('turn/start', { turn: 2 })
   assert.equal(flow.note(), '')
   flow.call('edit')
-  assert.match(flow.note(), /dsh-focus-review/)
-  assert.doesNotMatch(flow.note(), /已读取结果检查方法/)
+  assert.equal(flow.note(), '')
 })
 
 test('只保存有界调用标识，不存文件内容，无关事件不制造状态更新', () => {
@@ -94,24 +87,22 @@ test('只保存有界调用标识，不存文件内容，无关事件不制造�
   flow.complete('edit-0')
   assert.equal(flow.state(), before)
   flow.complete('edit-39')
-  assert.match(flow.note(), /dsh-focus-review/)
+  assert.match(flow.note(), /核对实际成果/)
 })
 
 test('只读资料的清单进展也提示结果检查，更新完成清单不会制造重查循环', () => {
   const flow = scenario()
-  flow.call('skill', { name: 'dsh-focus-planning' })
   const todos = [{ content: '提取三份报价', status: 'in_progress' }, { content: '核对条件并给出建议', status: 'pending' }]
   flow.append('todo/write', { todos })
-  flow.call('skill', { name: 'dsh-focus-execution' })
   flow.call('read', { file_path: '/sample/报价.md' })
   assert.equal(flow.note(), '')
   flow.append('todo/write', { todos: [{ ...todos[0], status: 'completed' }, { ...todos[1], status: 'in_progress' }] })
-  assert.match(flow.note(), /dsh-focus-review/)
-  flow.call('skill', { name: 'dsh-focus-review' })
-  assert.match(flow.note(), /dsh-focus-delivery/)
-  flow.call('skill', { name: 'dsh-focus-delivery' })
+  const note = flow.note()
+  assert.match(note, /核对实际成果/)
   flow.append('todo/write', { todos: todos.map(item => ({ ...item, status: 'completed' })) })
-  assert.equal(flow.note(), '')
+  assert.equal(flow.note(), note)
+  flow.call('apply_patch')
+  assert.match(flow.note(), /再次修改/)
   flow.append('turn/start', { turn: 2 })
   assert.equal(flow.note(), '')
 })

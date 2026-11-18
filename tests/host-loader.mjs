@@ -14,12 +14,13 @@ const load = name => import(pathToFileURL(sdkRequire.resolve('@deepseek-ai/' + n
 const { boot, loadProfileDirectory, evaluatePluginCompatibility, getDshRuntimeVersion } = await load('dsh-app-boot')
 assert.ok(['0.2.2-rc.3', '0.2.2-rc.4'].includes(getDshRuntimeVersion()), '需要支持的 0.2.2 官方 SDK')
 mkdirSync(work) // 不覆盖已有验证目录，更不接触日常 profile。
-symlinkSync(sdk + '/node_modules', work + '/node_modules', 'dir')
-execFileSync('/usr/bin/tar', ['-xzf', bundle, '-C', work])
+const directoryLink = process.platform === 'win32' ? 'junction' : 'dir'
+symlinkSync(sdk + '/node_modules', work + '/node_modules', directoryLink)
+execFileSync('tar', ['-xzf', bundle, '-C', work])
 const manifest = JSON.parse(readFileSync(work + '/package/package.json', 'utf8'))
 const profile = work + '/profile'
 mkdirSync(profile + '/node_modules/@missher', { recursive: true })
-symlinkSync(work + '/package', profile + '/node_modules/@missher/dsh-focus', 'dir')
+symlinkSync(work + '/package', profile + '/node_modules/@missher/dsh-focus', directoryLink)
 writeFileSync(profile + '/package.json', JSON.stringify({ name: 'focus-compatibility-test', private: true,
   dependencies: { '@missher/dsh-focus': 'file:../package' }, dsh: { profile: { bundles: ['@missher/dsh-focus'] } } }))
 writeFileSync(profile + '/cordis.yml', '[]\n')
@@ -89,19 +90,16 @@ try {
       return result
     } finally { toolSet.dispose() }
   }
-  assert.equal((await call('skill', { name: 'dsh-focus-planning' })).isError, false)
   assert.equal((await call('todo_write', { todos: [
     { content: '读取资料', status: 'in_progress' }, { content: '核对结果', status: 'pending' },
   ] })).isError, false)
-  assert.match(await note(), /dsh-focus-execution/)
-  await call('skill', { name: 'dsh-focus-execution' })
+  assert.match(await note(), /读取资料/)
+  assert.doesNotMatch(await note(), /dsh-focus-execution/)
   await call('todo_write', { todos: [
     { content: '读取资料', status: 'completed' }, { content: '核对结果', status: 'completed' },
   ] })
-  assert.match(await note(), /dsh-focus-review/)
-  await call('skill', { name: 'dsh-focus-review' })
-  assert.match(await note(), /dsh-focus-delivery/)
-  await call('skill', { name: 'dsh-focus-delivery' })
+  assert.match(await note(), /核对实际成果/)
+  assert.equal((await call('skill', { name: 'dsh-focus-review' })).isError, false)
   assert.equal(await note(), '')
   assert.equal((await call('focus_failure', {})).isError, true)
   assert.match(await note(), /dsh-focus-debugging/)
