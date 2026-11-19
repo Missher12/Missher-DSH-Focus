@@ -12,7 +12,7 @@ const sdk = resolve(sdkArg), bundle = resolve(bundleArg), work = resolve(workArg
 const sdkRequire = createRequire(sdk + '/package.json')
 const load = name => import(pathToFileURL(sdkRequire.resolve('@deepseek-ai/' + name)))
 const { boot, loadProfileDirectory, evaluatePluginCompatibility, getDshRuntimeVersion } = await load('dsh-app-boot')
-assert.ok(['0.2.2-rc.3', '0.2.2-rc.4'].includes(getDshRuntimeVersion()), '需要支持的 0.2.2 官方 SDK')
+assert.ok(['0.2.2-rc.3', '0.2.2-rc.4', '0.2.2-rc.5'].includes(getDshRuntimeVersion()), '需要支持的 0.2.2 官方 SDK')
 mkdirSync(work) // 不覆盖已有验证目录，更不接触日常 profile。
 const directoryLink = process.platform === 'win32' ? 'junction' : 'dir'
 symlinkSync(sdk + '/node_modules', work + '/node_modules', directoryLink)
@@ -34,6 +34,7 @@ assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.1-rc.4'), undefined)
 assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.1'), undefined)
 assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.3'), undefined)
 assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.4'), undefined)
+assert.equal(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.5'), undefined)
 assert.ok(evaluatePluginCompatibility(manifest, {}, '0.2.2-rc.2'), '未经验证的版本仍应受准入限制')
 
 const [Sessions, Projections, Prompt, Tools, Native, Skills, Todo, Scope, Llm] = await Promise.all([
